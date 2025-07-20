@@ -1,0 +1,175 @@
+DROP TABLE demo_damage_calculations;
+
+CREATE TABLE demo_damage_calculations
+(
+    id                        INTEGER
+                                 GENERATED ALWAYS AS IDENTITY
+(
+    START WITH 1
+    MAXVALUE 9999999999999999999999999999
+    MINVALUE 1
+    NOCYCLE
+    CACHE 20
+    NOORDER
+    NOKEEP
+    NOSCALE
+    )
+                                 NOT NULL,
+    session_id                NUMBER NOT NULL,
+    calculation_name          VARCHAR2(100 BYTE) NOT NULL,
+    damage                    VARCHAR2(50 BYTE) NOT NULL,
+    attack_modifier           INTEGER,
+    damage_modifier           INTEGER,
+    critical_threshold        INTEGER,
+    advantage_disadvantage    VARCHAR2(1 BYTE),
+    calculation_type          VARCHAR2(3 BYTE) DEFAULT 'AVG' NOT NULL,
+    lucky_feature             VARCHAR2(1 BYTE) DEFAULT 'N' NOT NULL,
+    chart                     VARCHAR2(1 BYTE) DEFAULT 'N' NOT NULL,
+    owner                     VARCHAR2(100 BYTE),
+    create_time               TIMESTAMP(6) WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL
+)
+LOGGING
+NOCOMPRESS
+NOCACHE
+RESULT_CACHE (MODE DEFAULT)
+NOPARALLEL;
+
+CREATE UNIQUE INDEX pk_demo_damage_calc
+    ON demo_damage_calculations(id)
+    LOGGING
+    NOPARALLEL;
+
+ALTER TABLE demo_damage_calculations
+    ADD(
+        CONSTRAINT ck_demo_damage_calc_advantage CHECK(advantage_disadvantage IN ('A', 'D')) ENABLE VALIDATE,
+        CONSTRAINT ck_demo_damage_calc_type CHECK(calculation_type IN ('AVG', 'MIN', 'MAX')) ENABLE VALIDATE,
+        CONSTRAINT ck_demo_damage_calc_chart_yn CHECK(chart IN ('N', 'Y')) ENABLE VALIDATE,
+        CONSTRAINT ck_demo_damage_calc_lucky_yn CHECK(lucky_feature IN ('N', 'Y')) ENABLE VALIDATE,
+        CONSTRAINT pk_demo_damage_calc PRIMARY KEY(id) USING INDEX pk_demo_damage_calc ENABLE VALIDATE);
+
+INSERT INTO demo_damage_calculations(session_id,
+                                     calculation_name,
+                                     damage,
+                                     attack_modifier,
+                                     damage_modifier,
+                                     critical_threshold,
+                                     advantage_disadvantage,
+                                     calculation_type,
+                                     lucky_feature,
+                                     chart,
+                                     owner,
+                                     create_time)
+         VALUES (-1,
+                 'Basil - Thaas, Sharpshooter, Advantage',
+                 '1d6',
+                 12,
+                 20,
+                 20,
+                 'A',
+                 'AVG',
+                 'Y',
+                 'N',
+                 'SDSDEMO',
+                 TO_TIMESTAMP_TZ('2025-07-12 13:31:41.056392 -04:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'));
+
+INSERT INTO demo_damage_calculations(session_id,
+                                     calculation_name,
+                                     damage,
+                                     attack_modifier,
+                                     damage_modifier,
+                                     critical_threshold,
+                                     advantage_disadvantage,
+                                     calculation_type,
+                                     lucky_feature,
+                                     chart,
+                                     owner,
+                                     create_time)
+         VALUES (-1,
+                 'Basil - Thaas, Base',
+                 '1d6',
+                 17,
+                 10,
+                 20,
+                 NULL,
+                 'AVG',
+                 'Y',
+                 'N',
+                 'SDSDEMO',
+                 TO_TIMESTAMP_TZ('2025-07-12 13:31:41.056392 -04:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'));
+
+INSERT INTO demo_damage_calculations(session_id,
+                                     calculation_name,
+                                     damage,
+                                     attack_modifier,
+                                     damage_modifier,
+                                     critical_threshold,
+                                     advantage_disadvantage,
+                                     calculation_type,
+                                     lucky_feature,
+                                     chart,
+                                     owner,
+                                     create_time)
+         VALUES (-1,
+                 'Enos - Maul, Great Weapon Fighting',
+                 '2g6+1g4',
+                 10,
+                 6,
+                 20,
+                 NULL,
+                 'AVG',
+                 'N',
+                 'N',
+                 'SDSDEMO',
+                 TO_TIMESTAMP_TZ('2025-07-12 13:31:41.056392 -04:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'));
+
+INSERT INTO demo_damage_calculations(session_id,
+                                     calculation_name,
+                                     damage,
+                                     attack_modifier,
+                                     damage_modifier,
+                                     critical_threshold,
+                                     advantage_disadvantage,
+                                     calculation_type,
+                                     lucky_feature,
+                                     chart,
+                                     owner,
+                                     create_time)
+         VALUES (-1,
+                 'Enos - Maul, Rage, Wrath, Smite, Great Weapon Fighting',
+                 '2g6+1g4+6d8',
+                 10,
+                 12,
+                 20,
+                 NULL,
+                 'AVG',
+                 'N',
+                 'N',
+                 'SDSDEMO',
+                 TO_TIMESTAMP_TZ('2025-07-12 13:31:41.056392 -04:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'));
+
+INSERT INTO demo_damage_calculations(session_id,
+                                     calculation_name,
+                                     damage,
+                                     attack_modifier,
+                                     damage_modifier,
+                                     critical_threshold,
+                                     advantage_disadvantage,
+                                     calculation_type,
+                                     lucky_feature,
+                                     chart,
+                                     owner,
+                                     create_time)
+         VALUES (-1,
+                 'Shyne - Eldritch Blast, Agonizing Blast',
+                 '1d10',
+                 6,
+                 4,
+                 20,
+                 NULL,
+                 'AVG',
+                 'N',
+                 'N',
+                 'SDSDEMO',
+                 TO_TIMESTAMP_TZ('2025-07-12 13:31:41.056392 -04:00', 'YYYY-MM-DD HH24:MI:SS.FF TZH:TZM'));
+
+COMMIT;

@@ -1,0 +1,282 @@
+CREATE OR REPLACE PACKAGE demodice
+AS
+    --
+    --
+    --                    .///.
+    --                   (0 o)
+    ---------------0000--(_)--0000---------------
+    --
+    --  Sean D. Stuber
+    --  sean.stuber@gmail.com
+    --
+    --             oooO      Oooo
+    --------------(   )-----(   )---------------
+    --             \ (       ) /
+    --              \_)     (_/
+
+    FUNCTION roll_die(p_faces IN INTEGER DEFAULT 6)
+        RETURN INTEGER;
+
+    FUNCTION calculate_roll(p_base IN VARCHAR2, p_calc_type IN VARCHAR2 DEFAULT 'RANDOM')
+        RETURN NUMBER;
+
+    FUNCTION damage_calculator(p_base_damage          VARCHAR2,
+                               p_hit_bonus            NUMBER,
+                               p_damage_bonus         NUMBER,
+                               p_ac                   NUMBER,
+                               p_advantage            VARCHAR2 DEFAULT NULL,
+                               p_lucky                VARCHAR2 DEFAULT 'N',
+                               p_critical_threshold   NUMBER DEFAULT 20,
+                               p_calc_type            VARCHAR2 DEFAULT 'AVERAGE')
+        RETURN NUMBER;
+END;
+/
+
+CREATE OR REPLACE PACKAGE BODY demodice
+AS
+    FUNCTION roll_die(p_faces IN INTEGER DEFAULT 6)
+        RETURN INTEGER
+    IS
+    BEGIN
+        RETURN TRUNC(DBMS_RANDOM.VALUE * p_faces) + 1;
+    END;
+
+    -- Parse simple arithmetic including die roll descriptions of the form XdN or XgN
+    --  X is an integer 0-99, Y is the number of faces on the die
+    -- supporting Platonic solid dice d4,d6,d8,d12,d20 plus d10 and d100 from Dungeons and Dragons
+    -- d stands for "die" or "dice"
+    -- so 3d6 would mean rolling three standard 6-sided dice
+    -- 2d8 would mean rolling two 8-sided dice
+    -- This function also supports "g" instead of "d"
+    -- g means the die of the given type is rolled normally but if any die result is 1 or 2
+    -- that die is rerolled once and you keep the second result for that die, regardles of the result.
+    FUNCTION calculate_roll(p_base IN VARCHAR2, p_calc_type IN VARCHAR2 DEFAULT 'RANDOM')
+        RETURN NUMBER
+    IS
+        evaluation_error             EXCEPTION;
+        PRAGMA EXCEPTION_INIT (evaluation_error, -19112);
+        c_roll_expression   CONSTANT VARCHAR2(100) := '[0-9]{1,2}(d|g)(100|20|12|10|8|6|4)';
+
+        v_cleaned_base               VARCHAR2(32767) := LOWER(REGEXP_REPLACE(p_base, '[[:space:]]'));
+        v_type                       VARCHAR2(7) := UPPER(TRIM(p_calc_type));
+        v_rolls                      INTEGER;
+        v_faces                      INTEGER;
+        v_result                     NUMBER;
+        v_dice_index                 INTEGER;
+        v_calc_expression            VARCHAR2(100);
+        v_onedie                     INTEGER;
+    BEGIN
+        v_dice_index := REGEXP_INSTR(v_cleaned_base, c_roll_expression);
+        v_calc_expression := REGEXP_SUBSTR(v_cleaned_base, c_roll_expression);
+
+        WHILE v_dice_index > 0
+        LOOP
+            v_rolls := NVL(TO_NUMBER(REGEXP_SUBSTR(v_calc_expression, '^[0-9]+'), '9999999999'), 1);
+            v_faces := TO_NUMBER(REGEXP_SUBSTR(v_calc_expression, '[0-9]+$', v_dice_index), '999');
+
+            CASE
+                WHEN v_type IN ('RANDOM', 'RAND')
+                THEN
+                    v_result := 0;
+
+                    CASE
+                        WHEN v_calc_expression LIKE '%d%'
+                        THEN
+                            FOR i IN 1 .. v_rolls
+                            LOOP
+                                v_result := v_result + roll_die(v_faces);
+                            END LOOP;
+                        WHEN v_calc_expression LIKE '%g%'
+                        THEN
+                            FOR i IN 1 .. v_rolls
+                            LOOP
+                                v_onedie := roll_die(v_faces);
+
+                                IF v_onedie IN (1, 2)
+                                THEN
+                                    v_onedie := roll_die(v_faces);
+                                END IF;
+
+                                v_result := v_result + v_onedie;
+                            END LOOP;
+                        ELSE
+                            NULL;
+                    END CASE;
+                WHEN v_type IN ('AVERAGE', 'AVG')
+                THEN
+                    v_result :=
+                          v_rolls
+                        * CASE
+                              WHEN v_calc_expression LIKE '%d%'
+                              THEN
+                                  (1 + v_faces) / 2
+                              WHEN v_calc_expression LIKE '%g%'
+                              THEN
+                                  (v_faces - 2 + (1 + v_faces) * (v_faces / 2)) / v_faces
+                          END;
+                WHEN v_type IN ('MINIMUM', 'MIN')
+                THEN
+                    v_result := v_rolls;
+                WHEN v_type IN ('MAXIMUM', 'MAX')
+                THEN
+                    v_result := v_rolls * v_faces;
+                ELSE
+                    v_result := NULL;
+            END CASE;
+
+            v_cleaned_base := REGEXP_REPLACE(v_cleaned_base, c_roll_expression, v_result, v_dice_index, 1);
+
+            v_dice_index := REGEXP_INSTR(v_cleaned_base, c_roll_expression);
+        END LOOP;
+
+        IF REGEXP_LIKE(v_cleaned_base, '^[-0-9+*/().]+$')
+        THEN
+            BEGIN
+                SELECT XMLQUERY(REPLACE(v_cleaned_base, '/', ' div ') RETURNING CONTENT).getnumberval()
+                  INTO v_result
+                  FROM DUAL;
+            EXCEPTION
+                WHEN evaluation_error OR ZERO_DIVIDE
+                THEN
+                    RETURN NULL;
+                WHEN OTHERS
+                THEN
+                    RAISE;
+            END;
+        ELSE
+            v_result := NULL;
+        END IF;
+
+        RETURN v_result;
+    END;
+
+    FUNCTION damage_calculator(p_base_damage          VARCHAR2,
+                               p_hit_bonus            NUMBER,
+                               p_damage_bonus         NUMBER,
+                               p_ac                   NUMBER,
+                               p_advantage            VARCHAR2 DEFAULT NULL,
+                               p_lucky                VARCHAR2 DEFAULT 'N',
+                               p_critical_threshold   NUMBER DEFAULT 20,
+                               p_calc_type            VARCHAR2 DEFAULT 'AVERAGE')
+        RETURN NUMBER
+    IS
+        v_lucky               BOOLEAN := UPPER(TRIM(p_lucky)) LIKE 'Y%';
+        v_have_advantage      BOOLEAN := p_advantage = 'A';
+        v_have_disadvantage   BOOLEAN := p_advantage = 'D';
+        v_result              NUMBER := 0;
+
+        FUNCTION roll_vs_ac(p_roll IN NUMBER)
+            RETURN NUMBER
+        IS
+            v_damage   NUMBER := calculate_roll(p_base_damage, p_calc_type);
+        BEGIN
+            RETURN CASE
+                       WHEN p_roll = 1
+                       THEN
+                           0
+                       WHEN p_roll = 20
+                       THEN
+                           v_damage + v_damage + p_damage_bonus
+                       WHEN p_roll + p_hit_bonus >= p_ac
+                       THEN
+                           CASE
+                               WHEN p_roll >= p_critical_threshold THEN v_damage + v_damage + p_damage_bonus
+                               ELSE v_damage + p_damage_bonus
+                           END
+                       ELSE
+                           0
+                   END;
+        END;
+    BEGIN
+        CASE
+            WHEN v_lucky
+            THEN
+                CASE
+                    WHEN v_have_advantage
+                    THEN
+                        -- 3d20 - 8000 permuations
+                        -- With two advantage dice and one luck die there is 1 way to roll a 1, 25 ways for 2, 69 ways for 3, 113 ways for a 4... 817 ways for 20
+                        -- That is 1 for 1, 25 for 2 and then each higher roll has 44 more ways (1 and then for n 2..20 (44n-63)
+
+                        -- A 1 is only possible by Rolling 3 ones (advantage and luck can't help this)
+                        v_result := roll_vs_ac(1);
+
+                        FOR i IN 2 .. 20
+                        LOOP
+                            v_result := v_result + roll_vs_ac(i) * ((44 * i) - 63);
+                        END LOOP;
+
+                        v_result := v_result / 8000;
+                    WHEN v_have_disadvantage
+                    THEN
+                        -- 3d20 - 8000 permuations
+                        -- With two disadvantage dice and one luck die there are 58 ways to roll a 1, 814 ways for 2, 770 ways for 3, 726 ways for a 4... 22 ways for 20
+                        -- That is 58 for 1, 814 for 2 and then each higher roll has 44 fewer ways (1 and then for n 2..20 (902-44n)
+
+                        -- Rolling a 1 has 58 variations with disadvantage and luck
+                        v_result := roll_vs_ac(1) * 58;
+
+                        FOR i IN 2 .. 20
+                        LOOP
+                            v_result := v_result + roll_vs_ac(i) * (902 - (44 * i));
+                        END LOOP;
+
+                        v_result := v_result / 8000;
+                    ELSE
+                        -- Normal, no advantage or disadvantage
+                        -- 2d20 - 400 permuations
+                        --
+                        --primary roll=1 and 20 possible luck rolls
+                        FOR i IN 1 .. 20
+                        LOOP
+                            v_result := v_result + roll_vs_ac(i);
+                        END LOOP;
+
+                        --primary roll = 2-20, luck die is irrelvant
+                        FOR i IN 2 .. 20
+                        LOOP
+                            v_result := v_result + roll_vs_ac(i) * 20;
+                        END LOOP;
+
+                        v_result := v_result / 400;
+                END CASE;
+            ELSE
+                -- when NOT LUCKY
+                CASE
+                    WHEN v_have_advantage
+                    THEN
+                        -- 2d20 - 400 permuations
+                        -- With advantage and no luck there is 1 way to roll a 1, 3 ways for 2, 5 ways for 3, ... 39 ways for 20 (2n-1)
+                        FOR i IN 1 .. 20
+                        LOOP
+                            v_result := v_result + roll_vs_ac(i) * ((2 * i) - 1);
+                        END LOOP;
+
+                        v_result := v_result / 400;
+                    WHEN v_have_disadvantage
+                    THEN
+                        -- 2d20 - 400 permuations
+                        -- With disadvantage and no luck there is 1 way to roll a 20, 3 ways for 19, 5 ways for 18, ... 39 ways for 1 (41-2n)
+                        FOR i IN 1 .. 20
+                        LOOP
+                            v_result := v_result + roll_vs_ac(i) * (41 - (2 * i));
+                        END LOOP;
+
+                        v_result := v_result / 400;
+                    ELSE
+                        -- Normal, no advantage or disadvantage
+                        -- 1d20 - 20 permuations
+                        --
+                        FOR i IN 1 .. 20
+                        LOOP
+                            v_result := v_result + roll_vs_ac(i);
+                        END LOOP;
+
+                        v_result := v_result / 20;
+                END CASE;
+        END CASE;
+
+        RETURN v_result;
+    END;
+END;
+/
